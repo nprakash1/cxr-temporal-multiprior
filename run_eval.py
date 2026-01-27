@@ -64,45 +64,37 @@ PROMPT_TEMPLATE = "The progression of {} is {}."
 # FIXED 28+ PHRASE PROGRESSION VOCABULARY
 # ============================================================
 PROGRESSION_PHRASES = {
+
+    # Explicit DECREASE only
     "improving": [
-        "improving",
-        "improved",
-        "interval improvement",
-        "improved compared to prior",
-        "decreased",
         "interval decrease",
-        "resolving",
+        "decreased extent",
+        "decreased size",
         "partial resolution",
-        "significant improvement",
+        "partially resolved",
+        "less extensive than prior",
     ],
+
+    # Explicit NO-CHANGE only
     "stable": [
-        "stable",
-        "unchanged",
-        "no significant change",
         "no interval change",
+        "no significant change",
+        "unchanged from prior",
         "stable compared with prior",
-        "unchanged from prior examination",
-        "without interval progression",
-        "no evidence of progression",
-        "no significant interval progression",
-        "persistent but unchanged",
-        "remains stable compared to prior",
-        "stable appearance compared to prior",
     ],
+
+    # Explicit INCREASE / NEW only
     "worsening": [
-        "worsening",
-        "worsened",
-        "progressed",
-        "progression",
         "interval increase",
-        "increased",
+        "increased extent",
         "interval worsening",
-        "worsening appearance",
+        "new",
+        "newly developed",
         "new or increased",
+        "progressed",
         "deteriorated",
     ],
 }
-
 CLS_ORDER = ["improving", "stable", "worsening"]
 
 
@@ -162,13 +154,13 @@ def classify_one(model, logit_d, prev_img, curr_img, disease, device):
 # MAIN LOOP
 # ============================================================
 if __name__ == "__main__":
-    device = "cuda:0"
-    ckpt = "old_checkpoint/tempa_epoch_45.pt"
+    device = "cpu"
+    ckpt = "/scratch/m000081/eprakash/checkpoints/tempa_epoch_40.pt"
 
     model, logit_d = load_model(ckpt, device)
 
-    input_csv = "/home/eprakash/temporal/baselines/mscxrt_labels.csv"
-    output_dir = "preds_tempa_mscxrt_45"
+    input_csv = "mscxrt_labels_new.csv"
+    output_dir = "/scratch/m000081/eprakash/preds_tempa_mscxrt"
     os.makedirs(output_dir, exist_ok=True)
 
     df = pd.read_csv(input_csv)

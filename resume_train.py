@@ -36,7 +36,7 @@ WORLD_SIZE = dist.get_world_size()
 CKPT_DIR = "/scratch/m000081/eprakash/checkpoints"
 os.makedirs(CKPT_DIR, exist_ok=True)
 
-RESUME_CKPT = CKPT_DIR + "/tempa_epoch_29.pt"
+RESUME_CKPT = CKPT_DIR + "/tempa_epoch_11.pt" 
 
 
 # ============================================================
@@ -81,13 +81,6 @@ model = DDP(
 
 
 # ============================================================
-# FREEZE TEXT ENCODER
-# ============================================================
-for p in model.module.text_encoder.parameters():
-    p.requires_grad = False
-
-
-# ============================================================
 # TEMPERATURE PARAMETERS
 # ============================================================
 logit_scale_static  = nn.Parameter(torch.tensor(0.0, device=DEVICE))
@@ -95,8 +88,11 @@ logit_scale_dynamic = nn.Parameter(torch.tensor(0.0, device=DEVICE))
 
 
 # ============================================================
-# OPTIMIZER
+# OPTIMIZER (TEXT ENCODER FROZEN — SAME AS YOU HAD)
 # ============================================================
+for p in model.module.text_encoder.parameters():
+    p.requires_grad = False
+
 optimizer = AdamW(
     list(model.module.image_encoder.parameters()) +
     list(model.module.cross_encoder.parameters()) +
@@ -130,6 +126,7 @@ loader = DataLoader(
     sampler=sampler,
     num_workers=8,
     pin_memory=True,
+    drop_last=False,
 )
 
 
@@ -155,9 +152,6 @@ if RESUME_CKPT is not None:
     logit_scale_static.data.copy_(ckpt["logit_scale_static"])
     logit_scale_dynamic.data.copy_(ckpt["logit_scale_dynamic"])
     start_epoch = ckpt["epoch"] + 1
-
-    if local_rank == 0:
-        print(f"✅ Resumed from epoch {ckpt['epoch']} → starting at {start_epoch}")
 
 
 # ============================================================
@@ -204,6 +198,7 @@ for epoch in range(start_epoch, EPOCHS + 1):
     for batch in pbar:
         curr = batch["current_img"].to(DEVICE)
         prev = batch["prior_img"].to(DEVICE)
+
         static_text = batch["static_text"]
         dynamic_text = batch["dynamic_text"]
 
@@ -214,23 +209,13 @@ for epoch in range(start_epoch, EPOCHS + 1):
             ts_all = gather_with_grad(ts)
             vd_all = gather_with_grad(vd)
             td_all = gather_with_grad(td)
-
-            # <<< ADDED: ONE-TIME ALL-GATHER SHAPE CHECK >>>
-            if local_rank == 0 and epoch == start_epoch and num_batches == 0:
-                print(
-                    f"[ALL-GATHER CHECK] "
-                    f"vs local={vs.shape}, "
-                    f"vs_all={vs_all.shape}, "
-                    f"expected={BATCH_SIZE * WORLD_SIZE}"
-                )
-
+            
             loss_static = info_nce(vs_all, ts_all, logit_scale_static.exp())
             loss_dynamic = info_nce(vd_all, td_all, logit_scale_dynamic.exp())
             loss = ALPHA * loss_dynamic + BETA * loss_static
 
         optimizer.zero_grad()
         scaler.scale(loss).backward()
-
         scaler.step(optimizer)
         scaler.update()
         scheduler.step()
@@ -248,23 +233,20 @@ for epoch in range(start_epoch, EPOCHS + 1):
             })
 
     if local_rank == 0:
-        epoch_loss = running_loss / num_batches
-        epoch_static = running_static / num_batches
-        epoch_dynamic = running_dynamic / num_batches
-
         print(
             f"Epoch {epoch}/{EPOCHS} | "
-            f"Total={epoch_loss:.4f} | "
-            f"Static={epoch_static:.4f} | "
-            f"Dynamic={epoch_dynamic:.4f}"
+            f"Total={running_loss/num_batches:.4f} | "
+            f"Static={running_static/num_batches:.4f} | "
+            f"Dynamic={running_dynamic/num_batches:.4f}"
         )
 
         log_file.write(
-            f"{epoch},{epoch_loss},{epoch_static},{epoch_dynamic}\n"
+            f"{epoch},{running_loss/num_batches},"
+            f"{running_static/num_batches},"
+            f"{running_dynamic/num_batches}\n"
         )
         log_file.flush()
 
-        ckpt_path = os.path.join(CKPT_DIR, f"tempa_epoch_{epoch}.pt")
         torch.save({
             "epoch": epoch,
             "model_state": model.module.state_dict(),
@@ -272,7 +254,7 @@ for epoch in range(start_epoch, EPOCHS + 1):
             "scheduler_state": scheduler.state_dict(),
             "logit_scale_static": logit_scale_static.data,
             "logit_scale_dynamic": logit_scale_dynamic.data,
-        }, ckpt_path)
+        }, os.path.join(CKPT_DIR, f"tempa_epoch_{epoch}.pt"))
 
 
 if local_rank == 0:

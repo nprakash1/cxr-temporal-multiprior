@@ -4,7 +4,7 @@ import pandas as pd
 # ---------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------
-preds_dir = "preds_tempa_mscxrt_short"  # Folder containing per-example prediction CSVs
+preds_dir = "/scratch/m000081/eprakash/preds_tempa_mscxrt"  # Folder containing per-example prediction CSVs
 
 # ---------------------------------------------------------
 # Load all individual prediction CSVs
@@ -151,7 +151,4 @@ for label in sorted(set(data["true_comparison"])):
 # ---------------------------------------------------------
 # Save combined data
 # ---------------------------------------------------------
-output_path = "mscxrt_errors_chexagent.csv"
-data.to_csv(output_path, index=False)
-print(f"\n✅ Combined results with mappings saved to: {output_path}")
 

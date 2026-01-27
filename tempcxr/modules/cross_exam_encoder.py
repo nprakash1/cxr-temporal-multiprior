@@ -15,11 +15,15 @@ class CrossExamEncoder(nn.Module):
         self.max_patches = max_patches
 
         # ---- Learnable POS embeds (S) ----
-        self.pos_embed = nn.Parameter(torch.randn(1, max_patches, embed_dim))
+        scale = 0.02
+        self.pos_embed = nn.Parameter(torch.randn(1, max_patches, embed_dim) * scale)
+        self.temp_embed_current = nn.Parameter(torch.randn(1, max_patches, embed_dim) * scale)
+        self.temp_embed_prev = nn.Parameter(torch.randn(1, max_patches, embed_dim) * scale)
+        #self.pos_embed = nn.Parameter(torch.randn(1, max_patches, embed_dim))
 
         # ---- Learnable TEMPORAL embeds (Xt for current, Xt-1 for previous) ----
-        self.temp_embed_current = nn.Parameter(torch.randn(1, max_patches, embed_dim))
-        self.temp_embed_prev    = nn.Parameter(torch.randn(1, max_patches, embed_dim))
+        #self.temp_embed_current = nn.Parameter(torch.randn(1, max_patches, embed_dim))
+        #self.temp_embed_prev    = nn.Parameter(torch.randn(1, max_patches, embed_dim))
 
         # ---- Learnable CLS token ----
         self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim))

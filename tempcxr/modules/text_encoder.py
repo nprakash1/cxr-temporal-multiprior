@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoTokenizer, AutoModel
 
-DEBUG = True   # <<< ENABLE DEBUG
+DEBUG = False   # <<< ENABLE DEBUG
 
 
 class TextEncoder(nn.Module):
@@ -24,7 +24,7 @@ class TextEncoder(nn.Module):
         if DEBUG:
             print(f"[TextEncoder] Loaded model: {model_name}")
             print(f"[TextEncoder] Projection dim: {self.embed_dim}")
-
+    
     @torch.no_grad()
     def forward(self, texts):
         tok = self.tokenizer(

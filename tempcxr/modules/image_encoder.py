@@ -28,15 +28,11 @@ class ImageEncoder(nn.Module):
         cls = last_hidden[:, 0]              # (B, 768)
         patches = last_hidden[:, 1:]         # (B, N, 768)
 
-        # L2 normalize (required for contrastive)
-        cls_norm = cls / (cls.norm(p=2, dim=-1, keepdim=True) + 1e-12)
-        patch_norm = patches / (patches.norm(p=2, dim=-1, keepdim=True) + 1e-12)
-
         if DEBUG:
-            print("[ImageEncoder] CLS shape:", cls_norm.shape)
-            print("[ImageEncoder] Patch shape:", patch_norm.shape)
+            print("[ImageEncoder] CLS shape:", cls.shape)
+            print("[ImageEncoder] Patch shape:", patches.shape)
 
-        return cls_norm, patch_norm
+        return cls, patches
 
 
 # --------------- Self-test ---------------
