@@ -1,12 +1,13 @@
 # dataset.py
+
 import random
 from pathlib import Path
-from typing import Optional, List
+from typing import List
 
 import pandas as pd
 from PIL import Image
 import torch
-from torch.utils.data import Dataset, Sampler
+from torch.utils.data import Dataset
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 
@@ -25,7 +26,7 @@ BASE_TRANSFORM = T.Compose([
 # ============================================================
 def sample_augmentation(train: bool):
     """
-    Sample augmentation parameters ONCE.
+    Sample augmentation parameters ONCE per sample pair.
     """
     if not train:
         return None
@@ -87,9 +88,10 @@ def resolve_image_path(
 class BioViLTDataset(Dataset):
     """
     Paper-faithful dataset:
-      - Ds: current only, prior=None
+
+      - Ds: current only (prior=None)
       - Dm: current + prior
-      - EXACT SAME transforms for current & prior
+      - EXACT SAME transforms applied to current & prior
     """
 
     def __init__(
@@ -105,7 +107,7 @@ class BioViLTDataset(Dataset):
         self.image_root = Path(image_root)
         self.train = train
 
-        # Split indices
+        # Precompute split indices for Ds and Dm
         self.single_indices = self.df.index[self.df["has_prior"] == False].tolist()
         self.multi_indices  = self.df.index[self.df["has_prior"] == True].tolist()
 
@@ -122,13 +124,14 @@ class BioViLTDataset(Dataset):
         subject_id = int(row["subject_id"])
         study_id   = int(row["study_id"])
 
-        # ---- load raw images ----
+        # ---- Load current image ----
         curr_raw = self._load_raw(
             row["dicom_id_curr"],
             subject_id,
             study_id,
         )
 
+        # ---- Load prior image if exists ----
         prior_raw = None
         if row["has_prior"]:
             prior_raw = self._load_raw(
@@ -137,12 +140,12 @@ class BioViLTDataset(Dataset):
                 int(row["prior_study_id"]),
             )
 
-        # ---- deterministic base ----
+        # ---- Deterministic base transform ----
         curr_raw = BASE_TRANSFORM(curr_raw)
         if prior_raw is not None:
             prior_raw = BASE_TRANSFORM(prior_raw)
 
-        # ---- synced augmentation ----
+        # ---- Synced augmentation ----
         params = sample_augmentation(self.train)
 
         curr_img = apply_augmentation(curr_raw, params)
@@ -161,49 +164,17 @@ class BioViLTDataset(Dataset):
 
 
 # ============================================================
-# HOMOGENEOUS BATCH SAMPLER (Ds / Dm)
-# ============================================================
-class BioViLTMixedBatchSampler(Sampler[List[int]]):
-    """
-    Each batch is entirely Ds or entirely Dm.
-    All samples used exactly once per epoch.
-    """
-
-    def __init__(self, dataset: BioViLTDataset, batch_size: int, seed: int = 0):
-        self.ds = dataset.single_indices
-        self.dm = dataset.multi_indices
-        self.batch_size = batch_size
-        self.seed = seed
-
-    def __iter__(self):
-        rng = random.Random(self.seed)
-
-        ds = self.ds.copy()
-        dm = self.dm.copy()
-
-        rng.shuffle(ds)
-        rng.shuffle(dm)
-
-        ds_batches = [ds[i:i+self.batch_size] for i in range(0, len(ds), self.batch_size)]
-        dm_batches = [dm[i:i+self.batch_size] for i in range(0, len(dm), self.batch_size)]
-
-        batches = ds_batches + dm_batches
-        rng.shuffle(batches)
-
-        for b in batches:
-            yield b
-
-    def __len__(self):
-        return (len(self.ds) + len(self.dm)) // self.batch_size
-
-
-# ============================================================
 # COLLATE FUNCTION
 # ============================================================
 def biovilt_collate_fn(batch):
+    """
+    Assumes batch is homogeneous (all Ds or all Dm).
+    That will be guaranteed by how we construct loaders.
+    """
     has_prior = batch[0]["has_prior"]
 
     curr = torch.stack([b["current_image"] for b in batch])
+
     prior = (
         torch.stack([b["prior_image"] for b in batch])
         if has_prior
@@ -222,6 +193,9 @@ def biovilt_collate_fn(batch):
 # SANITY CHECK
 # ============================================================
 if __name__ == "__main__":
+
+    from torch.utils.data import Subset
+
     ds = BioViLTDataset(
         csv_path="biovilt_pretrain_train_imagelevel.csv",
         image_root="/scratch/m000081/yunhe/dataset/MIMIC-CXR/mimic-cxr-jpg/2.0.0/files",
@@ -229,14 +203,23 @@ if __name__ == "__main__":
         train=True,
     )
 
-    print("Total:", len(ds))
-    print("Ds:", len(ds.single_indices))
-    print("Dm:", len(ds.multi_indices))
+    print("Total samples:", len(ds))
+    print("Single (Ds):", len(ds.single_indices))
+    print("Multi  (Dm):", len(ds.multi_indices))
 
-    # Check transform sync
-    idx = ds.multi_indices[0]
-    sample = ds[idx]
+    # ---- Check transform synchronization ----
+    if len(ds.multi_indices) > 0:
+        idx = ds.multi_indices[0]
+        sample = ds[idx]
+        diff = (sample["current_image"] - sample["prior_image"]).abs().mean()
+        print("Mean |current - prior| after identical transform:", diff.item())
 
-    diff = (sample["current_image"] - sample["prior_image"]).abs().mean()
-    print("Mean |current - prior| after identical transform:", diff.item())
+    # ---- Check subset creation (for distributed training) ----
+    single_subset = Subset(ds, ds.single_indices)
+    multi_subset  = Subset(ds, ds.multi_indices)
+
+    print("Single subset size:", len(single_subset))
+    print("Multi subset size :", len(multi_subset))
+
+    print("✅ Dataset sanity check passed.")
 

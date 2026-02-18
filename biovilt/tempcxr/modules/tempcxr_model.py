@@ -37,11 +37,11 @@ class TempCXR(nn.Module):
     Losses are computed externally (clean separation).
     """
 
-    def __init__(self):
+    def __init__(self, mode='biovil'):
         super().__init__()
 
-        self.image_encoder = BioViLTImageEncoder(mode="biovil")
-        self.text_encoder = BioViLTTextEncoder(mode="biovil")
+        self.image_encoder = BioViLTImageEncoder(mode=mode)
+        self.text_encoder = BioViLTTextEncoder(mode=mode)
 
     # --------------------------------------------------
     # FULL FORWARD (NO LOSSES)
@@ -104,7 +104,7 @@ if __name__ == "__main__":
     # --------------------------------------------------
     B = 2
     curr_imgs = torch.randn(B, 3, 448, 448).to(device)
-    prev_imgs = torch.randn(B, 3, 448, 448).to(device)
+    prev_imgs = None#torch.randn(B, 3, 448, 448).to(device)
 
     texts = [
         "Increased right pleural effusion.",

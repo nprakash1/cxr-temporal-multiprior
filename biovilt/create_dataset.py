@@ -182,9 +182,9 @@ train_df = df[df["split"] == "train"].reset_index(drop=True)
 val_df   = df[df["split"] == "validate"].reset_index(drop=True)
 test_df  = df[df["split"] == "test"].reset_index(drop=True)
 
-train_df.to_csv(OUT_TRAIN, index=False)
-val_df.to_csv(OUT_VAL, index=False)
-test_df.to_csv(OUT_TEST, index=False)
+#train_df.to_csv(OUT_TRAIN, index=False)
+#val_df.to_csv(OUT_VAL, index=False)
+#test_df.to_csv(OUT_TEST, index=False)
 
 # =======================
 # STATS

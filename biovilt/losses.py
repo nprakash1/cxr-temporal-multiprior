@@ -36,54 +36,93 @@ def global_contrastive_loss(
 # LOCAL CONTRASTIVE LOSS (BioViL-style)
 # =========================================================
 def local_contrastive_loss(
-    img_patches: torch.Tensor,
-    txt_tokens: torch.Tensor,
-    token_mask: torch.Tensor,
-    temperature: float = 0.07,
+    img_patches: torch.Tensor,   # (B, N, D)
+    txt_tokens: torch.Tensor,    # (B, T, D)
+    token_mask: torch.Tensor,    # (B, T)  True for valid tokens
+    temperature: float = 10.0,   # corresponds to temp3
     eps: float = 1e-8,
-) -> torch.Tensor:
+    temp1: float = 4.0,          # attention temperature
+    temp2: float = 5.0,          # word aggregation temperature
+):
     """
-    Local contrastive loss aligning text tokens to image patches.
+    Exact GLoRIA-style weighted local contrastive loss.
 
-    img_patches : (B, N, D)
-    txt_tokens  : (B, T, D)
-    token_mask  : (B, T)  -- True for valid tokens
+    Implements:
+    - Soft attention over patches
+    - Cosine similarity between token and weighted patch
+    - Log-sum-exp aggregation over tokens
+    - Symmetric InfoNCE over batch
     """
+
+    B, N, D = img_patches.shape
+    _, T, _ = txt_tokens.shape
 
     # --------------------------------------------------
-    # Normalize again for numerical safety
+    # 1️⃣ Normalize features (cosine similarity)
     # --------------------------------------------------
     img_patches = F.normalize(img_patches, dim=-1)
     txt_tokens = F.normalize(txt_tokens, dim=-1)
 
     # --------------------------------------------------
-    # Similarity: (B, T, N)
+    # 2️⃣ Cross-batch token–patch similarity
+    # Shape: (B_text, B_image, T, N)
     # --------------------------------------------------
-    sim = torch.einsum("btd,bnd->btn", txt_tokens, img_patches)
-    sim = sim / temperature
+    sim = torch.einsum("btd,knd->bktn", txt_tokens, img_patches)
 
     # --------------------------------------------------
-    # Mask padding tokens
+    # 3️⃣ Soft attention over patches (GLoRIA weighting)
+    # First softmax over tokens (as in original code)
+    # Then temperature scaling + second softmax
     # --------------------------------------------------
-    token_mask = token_mask.unsqueeze(-1)  # (B, T, 1)
-    sim = sim.masked_fill(~token_mask, -1e9)
+    attn = F.softmax(sim, dim=-1)          # over patches
+    attn = attn * temp1
+    attn = F.softmax(attn, dim=-1)         # second softmax
 
     # --------------------------------------------------
-    # Log-softmax over patches
+    # 4️⃣ Weighted patch representation per token
+    # weighted_context[b,k,t,d] =
+    #    sum_n attn[b,k,t,n] * img_patch[k,n,d]
     # --------------------------------------------------
-    log_probs = F.log_softmax(sim, dim=-1)
+    weighted_context = torch.einsum(
+        "bktn,knd->bktd", attn, img_patches
+    )
 
     # --------------------------------------------------
-    # Aggregate loss per token, per sample
+    # 5️⃣ Cosine similarity between tokens and weighted context
+    # (since normalized, dot product = cosine)
+    # Shape: (B_text, B_image, T)
     # --------------------------------------------------
-    token_loss = -log_probs.sum(dim=-1)              # (B, T)
-    token_loss = token_loss * token_mask.squeeze(-1)
+    token_sim = (txt_tokens.unsqueeze(1) * weighted_context).sum(dim=-1)
 
-    valid_tokens = token_mask.sum(dim=1).clamp(min=1)
-    sample_loss = token_loss.sum(dim=1) / valid_tokens.squeeze(-1)
+    # --------------------------------------------------
+    # 6️⃣ Mask padding tokens
+    # --------------------------------------------------
+    token_mask = token_mask.unsqueeze(1)  # (B_text,1,T)
+    token_sim = token_sim.masked_fill(~token_mask, 0.0)
 
-    return sample_loss.mean()
+    # --------------------------------------------------
+    # 7️⃣ Log-sum-exp aggregation over tokens (GLoRIA)
+    # Implements:
+    # log( sum_t exp(temp2 * cosine) )
+    # --------------------------------------------------
+    token_sim = torch.exp(token_sim * temp2)
+    token_sim = token_sim.sum(dim=-1) + eps
+    sim_matrix = torch.log(token_sim)
 
+    # --------------------------------------------------
+    # 8️⃣ Final temperature scaling (temp3)
+    # --------------------------------------------------
+    sim_matrix = sim_matrix * temperature  # (B,B)
+
+    # --------------------------------------------------
+    # 9️⃣ Symmetric InfoNCE
+    # --------------------------------------------------
+    labels = torch.arange(B, device=sim_matrix.device)
+
+    loss_i2t = F.cross_entropy(sim_matrix, labels)
+    loss_t2i = F.cross_entropy(sim_matrix.transpose(0, 1), labels)
+
+    return (loss_i2t + loss_t2i) / 2
 
 # =========================================================
 # MLM LOSS (CROSS ENTROPY)

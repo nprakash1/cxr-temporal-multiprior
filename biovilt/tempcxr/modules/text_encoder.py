@@ -121,13 +121,12 @@ class BioViLTTextEncoder(nn.Module):
     # ============================================================
     # CONTRASTIVE FORWARD (TEXT ONLY)
     # ============================================================
-    @torch.no_grad()
     def forward_contrastive(self, texts):
         texts = ["[CLS] " + t for t in texts]
 
         tok = self.tokenizer(
             texts,
-            padding=True,
+            padding="max_length",
             truncation=True,
             max_length=112,
             return_tensors="pt",
@@ -166,7 +165,7 @@ class BioViLTTextEncoder(nn.Module):
 
         tok = self.tokenizer(
             texts,
-            padding=True,
+            padding="max_length",
             truncation=True,
             max_length=112,
             return_tensors="pt",
