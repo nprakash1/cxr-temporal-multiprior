@@ -14,6 +14,7 @@ from tqdm import tqdm
 from dataset import BioViLTDataset, biovilt_collate_fn
 from tempcxr.modules.tempcxr_model import TempCXR
 from losses import global_contrastive_loss, local_contrastive_loss, mlm_loss
+from migrate_checkpoint import migrate_state_dict
 
 
 # ============================================================
@@ -34,7 +35,20 @@ CSV_LOG = os.path.join(LOG_DIR, "val_metrics.csv")
 # ARGUMENTS
 # ============================================================
 parser = argparse.ArgumentParser()
-parser.add_argument("--resume", type=str, default=None)
+parser.add_argument("--resume", type=str, default=None,
+                    help="Resume from a saved training checkpoint (epoch_N.pt). "
+                         "If None, the latest in CHECKPOINT_DIR is used.")
+parser.add_argument("--init-from", type=str, default=None,
+                    help="Initialize from a raw weights file (e.g. upstream "
+                         "BioViL-T) when no --resume checkpoint exists. "
+                         "Auto-migrated to current --k-max.")
+parser.add_argument("--k-max", type=int, default=1,
+                    help="Maximum number of priors per sample. K_max=1 "
+                         "reproduces original single-prior BioViL-T training. "
+                         "Set 2..N to enable multi-prior joint self-attention.")
+parser.add_argument("--mode", type=str, default="biovilt",
+                    choices=["biovil", "biovilt", "biovilt_finetuned"],
+                    help="Image-encoder weight init source for a fresh run.")
 args = parser.parse_args()
 
 
@@ -174,6 +188,7 @@ train_dataset = BioViLTDataset(
     image_root=IMAGE_ROOT,
     split="train",
     train=True,
+    k_max=args.k_max,
 )
 
 val_dataset = BioViLTDataset(
@@ -181,6 +196,7 @@ val_dataset = BioViLTDataset(
     image_root=IMAGE_ROOT,
     split="val",
     train=False,
+    k_max=args.k_max,
 )
 
 train_sampler = DistributedMixedBatchSampler(train_dataset, BATCH_SIZE, shuffle=True)
@@ -206,7 +222,7 @@ val_loader = DataLoader(
 # ============================================================
 # MODEL
 # ============================================================
-model = TempCXR().to(DEVICE)
+model = TempCXR(mode=args.mode, K_max=args.k_max).to(DEVICE)
 model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
 
 optimizer = AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
@@ -235,13 +251,36 @@ if args.resume is None:
 
 if args.resume is not None:
     checkpoint = torch.load(args.resume, map_location=DEVICE)
-    model.module.load_state_dict(checkpoint["model"])
+    # Migrate type_embed_multi if the checkpoint was saved at a different K_max.
+    migrated_state, mig_log = migrate_state_dict(
+        checkpoint["model"], K_max_new=args.k_max, verbose=False
+    )
+    model.module.load_state_dict(migrated_state)
     optimizer.load_state_dict(checkpoint["optimizer"])
     scheduler.load_state_dict(checkpoint["scheduler"])
     start_epoch = checkpoint["epoch"] + 1
     best_val_loss = checkpoint.get("best_val_loss", float("inf"))
     if local_rank == 0:
-        print(f"Resumed from {args.resume}")
+        print(f"Resumed from {args.resume} (K_max={args.k_max})")
+        for line in mig_log:
+            print(line)
+elif args.init_from is not None:
+    # Fresh run from raw weights (e.g. upstream BioViL-T) — auto-migrate.
+    raw = torch.load(args.init_from, map_location=DEVICE)
+    if isinstance(raw, dict) and "model" in raw and isinstance(raw["model"], dict):
+        raw = raw["model"]
+    migrated_state, mig_log = migrate_state_dict(
+        raw, K_max_new=args.k_max, verbose=False
+    )
+    missing, unexpected = model.module.load_state_dict(migrated_state, strict=False)
+    if local_rank == 0:
+        print(f"Initialized from {args.init_from} (K_max={args.k_max})")
+        for line in mig_log:
+            print(line)
+        if missing:
+            print(f"  [warn] {len(missing)} missing keys (kept random init)")
+        if unexpected:
+            print(f"  [warn] {len(unexpected)} unexpected keys (ignored)")
 
 
 # ============================================================
@@ -272,16 +311,18 @@ for epoch in range(start_epoch, EPOCHS + 1):
     for batch in pbar:
 
         curr = batch["current_image"].to(DEVICE)
-        prev = batch["prior_image"]
+        prior_imgs = batch["prior_images"]
+        prior_mask = batch["prior_mask"]
         texts = batch["text"]
 
-        if prev is not None:
-            prev = prev.to(DEVICE)
+        if prior_imgs is not None:
+            prior_imgs = prior_imgs.to(DEVICE)
+            prior_mask = prior_mask.to(DEVICE)
 
         optimizer.zero_grad()
 
         with torch.amp.autocast("cuda"):
-            outputs = model(curr, prev, texts)
+            outputs = model(curr, prior_imgs, prior_mask, texts=texts)
 
             img_global_all = gather_with_grad(outputs["img_global"])
             txt_global_all = gather_with_grad(outputs["txt_global"])
@@ -324,14 +365,16 @@ for epoch in range(start_epoch, EPOCHS + 1):
         for batch in val_loader:
 
             curr = batch["current_image"].to(DEVICE)
-            prev = batch["prior_image"]
+            prior_imgs = batch["prior_images"]
+            prior_mask = batch["prior_mask"]
             texts = batch["text"]
 
-            if prev is not None:
-                prev = prev.to(DEVICE)
+            if prior_imgs is not None:
+                prior_imgs = prior_imgs.to(DEVICE)
+                prior_mask = prior_mask.to(DEVICE)
 
             with torch.amp.autocast("cuda"):
-                outputs = model(curr, prev, texts)
+                outputs = model(curr, prior_imgs, prior_mask, texts=texts)
 
                 loss_g = global_contrastive_loss(outputs["img_global"], outputs["txt_global"])
                 loss_l = local_contrastive_loss(outputs["img_patches"], outputs["txt_local"], outputs["token_mask"])

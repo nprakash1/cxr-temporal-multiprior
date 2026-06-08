@@ -27,8 +27,17 @@ from health_multimodal.text.model.modelling_cxrbert import (
 )
 
 # HF identifiers
-BIOVIL_TEXT_MODEL = "/scratch/m000081/eprakash/temporal/model/biovilt/tempcxr/modules/pretrained/BiomedVLP-CXR-BERT-specialized"
-BIOVILT_TEXT_MODEL = "/scratch/m000081/eprakash/temporal/model/biovilt/tempcxr/modules/pretrained/BiomedVLP-BioViL-T"
+# These are HuggingFace repo IDs; the first import will download the weights
+# from the Hub.  If you have local copies of the models (e.g. on an HPC
+# cluster), override these via the CXR_BERT_PATH / BIOVIL_T_PATH env vars.
+BIOVIL_TEXT_MODEL = os.environ.get(
+    "CXR_BERT_PATH",
+    "microsoft/BiomedVLP-CXR-BERT-specialized",
+)
+BIOVILT_TEXT_MODEL = os.environ.get(
+    "BIOVIL_T_PATH",
+    "microsoft/BiomedVLP-BioViL-T",
+)
 
 
 # ================================================================

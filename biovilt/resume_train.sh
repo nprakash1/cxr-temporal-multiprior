@@ -38,9 +38,17 @@ export PYTHONFAULTHANDLER=1
 cd /scratch/m000081/eprakash/temporal/model/biovilt
 
 # ============================================================
+# K_max for multi-prior temporal fusion.
+#   K_MAX=1 → reproduces single-prior BioViL-T training (legacy behavior).
+#   K_MAX>1 → joint self-attention over up to K_MAX priors per sample.
+# ============================================================
+K_MAX=${K_MAX:-1}
+
+# ============================================================
 # Launch training (4 GPUs, DDP)
 # ============================================================
 torchrun \
   --nproc_per_node=4 \
   resume_train.py \
+  --k-max ${K_MAX} \
   --resume /scratch/m000081/eprakash/temporal/checkpoints/epoch_40.pt
