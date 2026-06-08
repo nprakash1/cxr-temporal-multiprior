@@ -6,15 +6,27 @@ joint self-attention to arbitrary K ∈ {0, 1, …, K_max} priors per
 sample, with full backward compatibility and an automatic checkpoint
 migration utility for the official BioViL-T weights.
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nprakash1/cxr-temporal-multiprior/blob/main/colab/run_on_colab.ipynb)
+[![Verify in Colab](https://colab.research.google.com/assets/colab-badge.svg) — **verify**](https://colab.research.google.com/github/nprakash1/cxr-temporal-multiprior/blob/main/colab/run_on_colab.ipynb)
+&nbsp;&nbsp;
+[![Train in Colab](https://colab.research.google.com/assets/colab-badge.svg) — **train**](https://colab.research.google.com/github/nprakash1/cxr-temporal-multiprior/blob/main/colab/train_on_colab.ipynb)
 
 ## Quick start
 
-### Colab (recommended for trying things out)
+### Colab — verify the build (no data needed)
 
-Click the badge above. The notebook clones the repo, installs deps,
-and runs the full 35-test verification suite plus a `K_max=4`
-forward-pass demo on a T4 runtime. No data download required.
+`colab/run_on_colab.ipynb` clones the repo, installs deps, and runs
+the full 35-test verification suite plus a `K_max=4` forward-pass
+demo on a T4 runtime. ~5 min, no MIMIC-CXR required.
+
+### Colab — actually train on a MIMIC subset
+
+`colab/train_on_colab.ipynb` takes a single zip of MIMIC-CXR-JPG
+patient folders (`p10/ … p19/` layout) uploaded to your Drive,
+unzips it to `/content`, and launches single-GPU training via
+`torchrun --nproc_per_node=1` with the cluster paths overridden by
+env vars. **The only thing you need to upload is the zip** — the
+CSVs ship with the repo and the upstream BioViL-T weights are
+auto-downloaded by `hi-ml`.
 
 ### Local
 

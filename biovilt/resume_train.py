@@ -18,17 +18,14 @@ from migrate_checkpoint import migrate_state_dict
 
 
 # ============================================================
-# PATHS
+# PATHS — overridable via env vars (or CLI). Defaults are the
+# original Marlowe-cluster paths so cluster training is unchanged;
+# Colab / local runs should set env vars or pass CLI flags.
 # ============================================================
-CHECKPOINT_DIR = "/scratch/m000081/eprakash/temporal/checkpoints"
-CSV_DIR = "/scratch/m000081/eprakash/temporal/model/biovilt"
-IMAGE_ROOT = "/scratch/m000081/yunhe/dataset/MIMIC-CXR/mimic-cxr-jpg/2.0.0/files"
-LOG_DIR = "/scratch/m000081/eprakash/temporal/logs"
-
-os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-os.makedirs(LOG_DIR, exist_ok=True)
-
-CSV_LOG = os.path.join(LOG_DIR, "val_metrics.csv")
+DEFAULT_CHECKPOINT_DIR = "/scratch/m000081/eprakash/temporal/checkpoints"
+DEFAULT_CSV_DIR        = "/scratch/m000081/eprakash/temporal/model/biovilt"
+DEFAULT_IMAGE_ROOT     = "/scratch/m000081/yunhe/dataset/MIMIC-CXR/mimic-cxr-jpg/2.0.0/files"
+DEFAULT_LOG_DIR        = "/scratch/m000081/eprakash/temporal/logs"
 
 
 # ============================================================
@@ -49,7 +46,46 @@ parser.add_argument("--k-max", type=int, default=1,
 parser.add_argument("--mode", type=str, default="biovilt",
                     choices=["biovil", "biovilt", "biovilt_finetuned"],
                     help="Image-encoder weight init source for a fresh run.")
+# Path overrides. Resolution order per path: CLI flag → env var → cluster default.
+parser.add_argument("--image-root",     type=str, default=None,
+                    help="Root dir of MIMIC-CXR-JPG files/ tree.")
+parser.add_argument("--csv-dir",        type=str, default=None,
+                    help="Dir containing biovilt_pretrain_*.csv (used only if "
+                         "--train-csv / --val-csv aren't set explicitly).")
+parser.add_argument("--train-csv",      type=str, default=None,
+                    help="Explicit path to the training CSV. Overrides --csv-dir.")
+parser.add_argument("--val-csv",        type=str, default=None,
+                    help="Explicit path to the validation CSV. Overrides --csv-dir.")
+parser.add_argument("--checkpoint-dir", type=str, default=None,
+                    help="Where to save epoch_*.pt and best.pt.")
+parser.add_argument("--log-dir",        type=str, default=None,
+                    help="Where to write val_metrics.csv.")
+parser.add_argument("--epochs", type=int, default=None,
+                    help="Override the default 50 epochs (useful for smoke runs).")
+parser.add_argument("--batch-size", type=int, default=None,
+                    help="Override the default per-GPU batch size of 32.")
 args = parser.parse_args()
+
+
+def _pick(cli_val, env_key, default):
+    """Resolution: explicit CLI flag → env var → cluster default."""
+    if cli_val is not None:
+        return cli_val
+    return os.environ.get(env_key, default)
+
+
+CHECKPOINT_DIR = _pick(args.checkpoint_dir, "CHECKPOINT_DIR", DEFAULT_CHECKPOINT_DIR)
+CSV_DIR        = _pick(args.csv_dir,        "CSV_DIR",        DEFAULT_CSV_DIR)
+IMAGE_ROOT     = _pick(args.image_root,     "IMAGE_ROOT",     DEFAULT_IMAGE_ROOT)
+LOG_DIR        = _pick(args.log_dir,        "LOG_DIR",        DEFAULT_LOG_DIR)
+
+TRAIN_CSV = args.train_csv or os.path.join(CSV_DIR, "biovilt_pretrain_train_imagelevel.csv")
+VAL_CSV   = args.val_csv   or os.path.join(CSV_DIR, "biovilt_pretrain_combined_imagelevel.csv")
+
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
+
+CSV_LOG = os.path.join(LOG_DIR, "val_metrics.csv")
 
 
 # ============================================================
@@ -63,6 +99,13 @@ def setup_ddp():
 
 local_rank, DEVICE = setup_ddp()
 WORLD_SIZE = dist.get_world_size()
+
+if local_rank == 0:
+    print(f"[paths] IMAGE_ROOT      = {IMAGE_ROOT}")
+    print(f"[paths] TRAIN_CSV       = {TRAIN_CSV}")
+    print(f"[paths] VAL_CSV         = {VAL_CSV}")
+    print(f"[paths] CHECKPOINT_DIR  = {CHECKPOINT_DIR}")
+    print(f"[paths] LOG_DIR         = {LOG_DIR}")
 
 
 def ddp_reduce(value):
@@ -171,9 +214,13 @@ class DistributedMixedBatchSampler(torch.utils.data.Sampler):
 # ============================================================
 LR = 2e-5
 WEIGHT_DECAY = 0.01
-BATCH_SIZE = 32
-EPOCHS = 50
+BATCH_SIZE   = args.batch_size if args.batch_size is not None else 32
+EPOCHS       = args.epochs     if args.epochs     is not None else 50
 WARMUP_RATIO = 0.03
+
+# DataLoader worker count: cluster default 8; Colab/local should set
+# NUM_WORKERS=2 (free Colab only has 2 vCPU). Env var is the override.
+NUM_WORKERS = int(os.environ.get("NUM_WORKERS", "8"))
 
 W_GLOBAL = 1.0
 W_LOCAL = 0.5
@@ -184,7 +231,7 @@ W_MLM = 1.0
 # DATASETS
 # ============================================================
 train_dataset = BioViLTDataset(
-    csv_path=os.path.join(CSV_DIR, "biovilt_pretrain_train_imagelevel.csv"),
+    csv_path=TRAIN_CSV,
     image_root=IMAGE_ROOT,
     split="train",
     train=True,
@@ -192,7 +239,7 @@ train_dataset = BioViLTDataset(
 )
 
 val_dataset = BioViLTDataset(
-    csv_path=os.path.join(CSV_DIR, "biovilt_pretrain_combined_imagelevel.csv"),
+    csv_path=VAL_CSV,
     image_root=IMAGE_ROOT,
     split="val",
     train=False,
@@ -205,7 +252,7 @@ val_sampler = DistributedMixedBatchSampler(val_dataset, BATCH_SIZE, shuffle=Fals
 train_loader = DataLoader(
     train_dataset,
     batch_sampler=train_sampler,
-    num_workers=8,
+    num_workers=NUM_WORKERS,
     pin_memory=True,
     collate_fn=biovilt_collate_fn,
 )
@@ -213,7 +260,7 @@ train_loader = DataLoader(
 val_loader = DataLoader(
     val_dataset,
     batch_sampler=val_sampler,
-    num_workers=8,
+    num_workers=NUM_WORKERS,
     pin_memory=True,
     collate_fn=biovilt_collate_fn,
 )
