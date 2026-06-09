@@ -123,7 +123,25 @@ class BioViLTDataset(Dataset):
         self.k_max = k_max
 
         self.df = pd.read_csv(csv_path)
-        self.df = self.df[self.df["split"] == split].reset_index(drop=True)
+
+        # Normalize split label aliases so that callers can pass either
+        # the short ("val", "test") or long ("validate", "evaluate")
+        # forms regardless of how the CSV was written.  This was the
+        # source of a silent "val_dataset is empty" bug that surfaced
+        # downstream as a ZeroDivisionError in the val sampler.
+        _SPLIT_ALIASES = {
+            "val":      {"val", "validate", "validation", "valid"},
+            "validate": {"val", "validate", "validation", "valid"},
+            "train":    {"train", "training"},
+            "test":     {"test", "testing", "evaluate", "eval"},
+        }
+        accepted = _SPLIT_ALIASES.get(split, {split})
+        self.df = self.df[self.df["split"].isin(accepted)].reset_index(drop=True)
+        assert len(self.df) > 0, (
+            f"BioViLTDataset: no rows match split={split!r} "
+            f"(aliases tried: {sorted(accepted)}).  "
+            f"Found splits in CSV: {sorted(pd.read_csv(csv_path)['split'].unique().tolist())}"
+        )
 
         self.image_root = Path(image_root)
         self.train = train
