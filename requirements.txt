@@ -32,6 +32,11 @@ tokenizers>=0.13,<0.20
 pandas>=1.5
 pillow>=9.0
 numpy>=1.23,<2.0
+# scipy is pulled in transitively (timm -> scipy). Pin it to a numpy-1.x
+# build so it stays consistent with the numpy<2.0 pin above. Without this,
+# Colab's pre-installed numpy-2.x-built scipy lingers and raises
+# `_blas_supports_fpe` AttributeErrors at import time.
+scipy>=1.10,<1.13
 
 # ----- Utilities -----
 tqdm>=4.65
