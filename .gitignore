@@ -47,6 +47,20 @@ checkpoints/
 # Vendored upstream (not under our license; pull on demand if ever needed)
 biovilt/tempcxr/modules/hi-ml/
 
+# ============================================================
+# CREDENTIALED PhysioNet DATA — NEVER COMMIT (DUA violation).
+# Raw MIMIC sheets and anything derived from them.
+# ============================================================
+mimic-cxr-2.0.0-metadata.csv
+mimic-cxr-2.0.0-chexpert.csv
+mimic-cxr-2.0.0-split.csv
+mimic-cxr-2.0.0-*.csv
+*-no_no_finding.csv
+subset_out/chexpert_labels_subset.csv
+full_out/
+full_out_*/
+
+
 # Coverage
 .coverage
 htmlcov/
