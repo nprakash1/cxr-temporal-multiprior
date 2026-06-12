@@ -134,7 +134,31 @@ NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
 - `--k-max 1` = newest-prior baseline (BioViL-T); `--k-max 4` = multi-prior.
 - Outputs: `checkpoints/epoch_*.pt` + `best.pt`; metrics in `logs/val_metrics.csv`.
 
+> **What you get:** training itself produces no graphs — just scrolling console
+> logs, the `.pt` checkpoints, and `logs/val_metrics.csv` (one row per epoch:
+> `epoch,val_total,val_global,val_local,val_mlm`).
+
 ---
+
+## 7. Plot the loss curves (optional)
+
+Turn `val_metrics.csv` into PNG graphs. This is a separate, GPU-free step you
+can run during or after training:
+
+```bash
+python biovilt/plot_metrics.py --csv logs/val_metrics.csv --out-dir logs
+```
+
+Writes into `--out-dir`:
+- `val_loss_total.png` — total validation loss vs epoch (best epoch marked)
+- `val_loss_components.png` — global / local / mlm losses on one axis
+
+Uses a headless matplotlib backend, so it works over SSH on the GCP box. Add
+`--show` only if you have a display. Pull the PNGs back with
+`gcloud compute scp` (or `gsutil cp`).
+
+---
+
 
 ## Command-line flags for `resume_train.py`
 
