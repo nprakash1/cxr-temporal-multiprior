@@ -65,3 +65,4 @@ full_out_*/
 .coverage
 htmlcov/
 .pytest_cache/
+subset_out/
