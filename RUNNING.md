@@ -6,6 +6,43 @@ fresh machine. **You provide** the GPU box + the credentialed MIMIC data;
 
 ---
 
+## TL;DR — simplified train command (paths only, everything else default)
+
+Once the data + CSVs exist (steps 1–5 below), if you're happy with all the
+training defaults you only need the four path flags and the GPU count:
+
+```bash
+NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
+  --image-root      $DATA/files \
+  --csv-dir         full_out_nonf \
+  --checkpoint-dir  checkpoints \
+  --log-dir         logs
+```
+
+Dropped flags fall back to their defaults:
+
+| Omitted flag | Falls back to | Note |
+|---|---|---|
+| `--k-max` | **`1`** (single-prior / BioViL-T) | ⚠️ not 4 — see below |
+| `--mode` | `biovilt` | |
+| `--batch-size` | `32` (per GPU) | |
+| `--epochs` | `50` | |
+
+> ⚠️ **`--k-max` defaults to `1`**, so the simplified command trains the
+> **single-prior** baseline. For the **multi-prior** model keep `--k-max 4`:
+>
+> ```bash
+> NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
+>   --image-root $DATA/files --csv-dir full_out_nonf \
+>   --checkpoint-dir checkpoints --log-dir logs \
+>   --k-max 4
+> ```
+
+The full walkthrough (deps, data prep, all flags) follows below.
+
+---
+
+
 ## 0. Prerequisites on the target machine
 
 - **A GPU** with NVIDIA drivers + CUDA installed (`nvidia-smi` must work).
@@ -213,40 +250,4 @@ To move a processed file between machines, use a **private** channel
 a git remote. Easiest of all: just regenerate it on the target machine
 (steps 4–5), since the source CSVs already live there.
 
----
-
-## Simplified train command (paths only, everything else default)
-
-If you're happy with all the training defaults, you only need to pass the four
-path flags and the GPU count — drop `--k-max / --mode / --batch-size / --epochs`
-and the trainer uses its built-in defaults:
-
-```bash
-NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
-  --image-root      $DATA/files \
-  --csv-dir         full_out_nonf \
-  --checkpoint-dir  checkpoints \
-  --log-dir         logs
-```
-
-This is **exactly equivalent** to the full step-6 command *except* for the
-defaults it falls back to:
-
-| Omitted flag | Falls back to | vs. full command |
-|---|---|---|
-| `--k-max` | **`1`** (single-prior / BioViL-T) | full command used `4` (multi-prior) |
-| `--mode` | `biovilt` | same |
-| `--batch-size` | `32` (per GPU) | same |
-| `--epochs` | `50` | same |
-
-> ⚠️ **The one that matters:** `--k-max` defaults to **1**, not 4. So the
-> simplified command trains the **single-prior** baseline. If you want the
-> multi-prior model, you must keep `--k-max 4` explicitly:
->
-> ```bash
-> NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
->   --image-root $DATA/files --csv-dir full_out_nonf \
->   --checkpoint-dir checkpoints --log-dir logs \
->   --k-max 4
-> ```
 
