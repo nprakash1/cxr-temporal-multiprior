@@ -6,41 +6,31 @@ fresh machine. **You provide** the GPU box + the credentialed MIMIC data;
 
 ---
 
-## TL;DR — simplified train command (paths only, everything else default)
+## TL;DR — simplified train command (only the model knobs, paths default)
 
-Once the data + CSVs exist (steps 1–5 below), if you're happy with all the
-training defaults you only need the four path flags and the GPU count:
+If the data + CSVs already live at the trainer's **default paths**, you only
+need to set the four model knobs (`--k-max`, `--mode`, `--batch-size`,
+`--epochs`) plus the GPU count — everything else (`--image-root`, `--csv-dir`,
+`--checkpoint-dir`, `--log-dir`) falls back to its built-in default:
 
 ```bash
 NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
-  --image-root      $DATA/files \
-  --csv-dir         full_out_nonf \
-  --checkpoint-dir  checkpoints \
-  --log-dir         logs
+  --k-max 4 --mode biovilt --batch-size 32 --epochs 50
 ```
 
-Dropped flags fall back to their defaults:
+- `<NUM_GPUS>` = number of GPUs (torchrun arg).
+- The four omitted **path** flags use the cluster defaults baked into
+  `resume_train.py` (`IMAGE_ROOT`, `CSV_DIR`, `CHECKPOINT_DIR`, `LOG_DIR`).
 
-| Omitted flag | Falls back to | Note |
-|---|---|---|
-| `--k-max` | **`1`** (single-prior / BioViL-T) | ⚠️ not 4 — see below |
-| `--mode` | `biovilt` | |
-| `--batch-size` | `32` (per GPU) | |
-| `--epochs` | `50` | |
-
-> ⚠️ **`--k-max` defaults to `1`**, so the simplified command trains the
-> **single-prior** baseline. For the **multi-prior** model keep `--k-max 4`:
->
-> ```bash
-> NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
->   --image-root $DATA/files --csv-dir full_out_nonf \
->   --checkpoint-dir checkpoints --log-dir logs \
->   --k-max 4
-> ```
+> ⚠️ **Only works where those default paths are valid** (the Stanford cluster,
+> or wherever you set the `IMAGE_ROOT` / `CSV_DIR` / `CHECKPOINT_DIR` /
+> `LOG_DIR` env vars). On a fresh GCP box the defaults point at `/scratch/...`,
+> so you must add the path flags — see the full step-6 command below.
 
 The full walkthrough (deps, data prep, all flags) follows below.
 
 ---
+
 
 
 ## 0. Prerequisites on the target machine
