@@ -6,33 +6,6 @@ fresh machine. **You provide** the GPU box + the credentialed MIMIC data;
 
 ---
 
-## TL;DR — simplified train command (only the model knobs, paths default)
-
-If the data + CSVs already live at the trainer's **default paths**, you only
-need to set the four model knobs (`--k-max`, `--mode`, `--batch-size`,
-`--epochs`) plus the GPU count — everything else (`--image-root`, `--csv-dir`,
-`--checkpoint-dir`, `--log-dir`) falls back to its built-in default:
-
-```bash
-NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
-  --k-max 4 --mode biovilt --batch-size 32 --epochs 50
-```
-
-- `<NUM_GPUS>` = number of GPUs (torchrun arg).
-- The four omitted **path** flags use the cluster defaults baked into
-  `resume_train.py` (`IMAGE_ROOT`, `CSV_DIR`, `CHECKPOINT_DIR`, `LOG_DIR`).
-
-> ⚠️ **Only works where those default paths are valid** (the Stanford cluster,
-> or wherever you set the `IMAGE_ROOT` / `CSV_DIR` / `CHECKPOINT_DIR` /
-> `LOG_DIR` env vars). On a fresh GCP box the defaults point at `/scratch/...`,
-> so you must add the path flags — see the full step-6 command below.
-
-The full walkthrough (deps, data prep, all flags) follows below.
-
----
-
-
-
 ## 0. Prerequisites on the target machine
 
 - **A GPU** with NVIDIA drivers + CUDA installed (`nvidia-smi` must work).
