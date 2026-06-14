@@ -103,7 +103,7 @@ python biovilt/create_dataset.py \
   --metadata-csv full_out_nonf/metadata-no_no_finding.csv \
   --split-csv    $DATA/mimic-cxr-2.0.0-split.csv \
   --out-dir      full_out_nonf \
-  --k-max        4 \
+  --k-max        1 \
   --save
 
 # the validation loader expects a "combined" filename — add the symlink:
@@ -130,8 +130,9 @@ python biovilt/create_dataset.py \
   --metadata-csv $DATA/mimic-cxr-2.0.0-metadata.csv \
   --split-csv    $DATA/mimic-cxr-2.0.0-split.csv \
   --out-dir      full_out \
-  --k-max        4 \
+  --k-max        1 \
   --save
+
 
 # the validation loader expects a "combined" filename — add the symlink:
 ln -sf biovilt_pretrain_val_imagelevel.csv \
@@ -156,7 +157,8 @@ NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
   --csv-dir         full_out_nonf \
   --checkpoint-dir  checkpoints \
   --log-dir         logs \
-  --k-max 1 --mode biovilt --batch-size 32 --epochs 50
+  --k-max 1 --mode biovil --batch-size 32 --epochs 50
+
 ```
 
 
