@@ -100,12 +100,9 @@ def setup_ddp():
 local_rank, DEVICE = setup_ddp()
 WORLD_SIZE = dist.get_world_size()
 
-if local_rank == 0:
-    print(f"[paths] IMAGE_ROOT      = {IMAGE_ROOT}")
-    print(f"[paths] TRAIN_CSV       = {TRAIN_CSV}")
-    print(f"[paths] VAL_CSV         = {VAL_CSV}")
-    print(f"[paths] CHECKPOINT_DIR  = {CHECKPOINT_DIR}")
-    print(f"[paths] LOG_DIR         = {LOG_DIR}")
+# A full, verbose run-config banner is printed later (after the hyper-
+# parameters and dataloaders are resolved) — see `print_run_config()`.
+
 
 
 def ddp_reduce(value):
@@ -267,8 +264,75 @@ val_loader = DataLoader(
 
 
 # ============================================================
+# VERBOSE RUN-CONFIG BANNER
+# ============================================================
+def print_run_config():
+    """
+    Print, at the top of every run's log:
+      1. a per-rank line proving each GPU is actually in use and showing
+         the per-GPU batch size, and
+      2. (rank 0 only) a full dump of every parameter, path, dataset size,
+         and the per-GPU / global batch sizes.
+    """
+    # (1) Every rank announces the GPU it occupies + its per-GPU batch size.
+    try:
+        gpu_name = torch.cuda.get_device_name(local_rank)
+    except Exception:
+        gpu_name = "unknown"
+    print(
+        f"[gpu] rank {local_rank}/{WORLD_SIZE - 1} -> cuda:{local_rank} "
+        f"({gpu_name}) | per-GPU batch_size={BATCH_SIZE}",
+        flush=True,
+    )
+
+    # Make sure all per-rank lines are flushed before rank 0 prints the banner.
+    dist.barrier()
+
+    if local_rank != 0:
+        return
+
+    global_batch = BATCH_SIZE * WORLD_SIZE
+    bar = "=" * 64
+    print("\n" + bar)
+    print(" RUN CONFIGURATION")
+    print(bar)
+    # --- model / training knobs ---
+    print(f"[run]    mode            = {args.mode}")
+    print(f"[run]    k_max           = {args.k_max}")
+    print(f"[run]    epochs          = {EPOCHS}")
+    print(f"[run]    resume          = {args.resume}")
+    print(f"[run]    init_from       = {args.init_from}")
+    # --- hyperparameters ---
+    print(f"[hparam] lr              = {LR}")
+    print(f"[hparam] weight_decay    = {WEIGHT_DECAY}")
+    print(f"[hparam] warmup_ratio    = {WARMUP_RATIO}")
+    print(f"[hparam] num_workers     = {NUM_WORKERS}")
+    print(f"[hparam] loss weights    = global:{W_GLOBAL} local:{W_LOCAL} mlm:{W_MLM}")
+    # --- paths ---
+    print(f"[paths]  IMAGE_ROOT      = {IMAGE_ROOT}")
+    print(f"[paths]  TRAIN_CSV       = {TRAIN_CSV}")
+    print(f"[paths]  VAL_CSV         = {VAL_CSV}")
+    print(f"[paths]  CHECKPOINT_DIR  = {CHECKPOINT_DIR}")
+    print(f"[paths]  LOG_DIR         = {LOG_DIR}")
+    # --- data ---
+    print(f"[data]   train samples   = {len(train_dataset)}")
+    print(f"[data]   val samples     = {len(val_dataset)}")
+    print(f"[data]   steps/epoch     = {len(train_loader)}")
+    # --- GPU / batch summary ---
+    print("-" * 64)
+    print(f"[gpus]   active GPUs (world_size) = {WORLD_SIZE}")
+    print(f"[gpus]   per-GPU batch size       = {BATCH_SIZE}")
+    print(f"[gpus]   GLOBAL batch size        = {BATCH_SIZE} x {WORLD_SIZE} = {global_batch}")
+    print(bar + "\n", flush=True)
+
+
+print_run_config()
+
+
+# ============================================================
 # MODEL
 # ============================================================
+
 model = TempCXR(mode=args.mode, K_max=args.k_max).to(DEVICE)
 model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
 
