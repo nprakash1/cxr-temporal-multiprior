@@ -156,8 +156,9 @@ NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
   --csv-dir         full_out_nonf \
   --checkpoint-dir  checkpoints \
   --log-dir         logs \
-  --k-max 4 --mode biovilt --batch-size 32 --epochs 50
+  --k-max 1 --mode biovilt --batch-size 32 --epochs 50
 ```
+
 
 - `<NUM_GPUS>` = number of GPUs (`1`, `4`, …) — a **torchrun** argument.
 - `--k-max 1` = newest-prior baseline (BioViL-T); `--k-max 4` = multi-prior.
