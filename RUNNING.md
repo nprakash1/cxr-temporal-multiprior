@@ -117,9 +117,38 @@ This produces in `full_out_nonf/`:
 > `create_dataset.py` has a hard-coded Stanford default path, so on any other
 > machine you **must** pass `--files-dir`, `--metadata-csv`, and `--split-csv`.
 
+### 5b. Build CSVs on the FULL dataset (skip the "No Finding" filter)
+
+If you **skip step 4** and want to train on the full MIMIC set (normals
+included), point `--metadata-csv` straight at MIMIC's original metadata and
+`--split-csv` at the official split — no filtered copy involved:
+
+```bash
+mkdir -p full_out
+python biovilt/create_dataset.py \
+  --files-dir    $DATA/files \
+  --metadata-csv $DATA/mimic-cxr-2.0.0-metadata.csv \
+  --split-csv    $DATA/mimic-cxr-2.0.0-split.csv \
+  --out-dir      full_out \
+  --k-max        4 \
+  --save
+
+# the validation loader expects a "combined" filename — add the symlink:
+ln -sf biovilt_pretrain_val_imagelevel.csv \
+       full_out/biovilt_pretrain_combined_imagelevel.csv
+```
+
+This produces in `full_out/`:
+`biovilt_pretrain_{train,val,test}_imagelevel.csv` (+ the combined symlink).
+The only differences from step 5 are `--metadata-csv` (raw MIMIC metadata
+instead of the `-no_no_finding.csv` copy) and `--out-dir full_out`.
+
+> If you use this, point training at it too: `--csv-dir full_out` in step 6.
+
 ---
 
 ## 6. Train
+
 
 ```bash
 NUM_WORKERS=8 torchrun --nproc_per_node=<NUM_GPUS> biovilt/resume_train.py \
