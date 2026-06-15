@@ -60,6 +60,13 @@ subset_out/chexpert_labels_subset.csv
 full_out/
 full_out_*/
 
+# MS-CXR-T labels + any assembled eval/image-level CSVs (derived from MIMIC)
+mscxrt_labels.csv
+mscxrt_*.csv
+*_imagelevel.csv
+mscxrt_eval*/
+
+
 
 # Coverage
 .coverage
