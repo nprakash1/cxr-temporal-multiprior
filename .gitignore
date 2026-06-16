@@ -66,6 +66,13 @@ mscxrt_*.csv
 *_imagelevel.csv
 mscxrt_eval*/
 
+# MS-CXR-T export bundles for collaborators (images + manifest + file list)
+export_mscxrt/
+mscxrt_bundle/
+mscxrt_files_*.txt
+*.tar.gz
+
+
 
 
 # Coverage
