@@ -80,3 +80,7 @@ mscxrt_files_*.txt
 htmlcov/
 .pytest_cache/
 subset_out/
+
+# Local-only data tree (MS-CXR-T images + per-K checkpoint folders).
+# DO NOT COMMIT — this is GBs of MIMIC-derived data.
+req_files/
