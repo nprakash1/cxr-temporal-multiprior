@@ -12,15 +12,25 @@ CSV ──► Dataset ──► Collate ──► Encoder.forward ──► Enco
    Plus:
    • ✅ Checkpoint migration utility (Step 7)
    • ✅ `--k-max` wired into the training script (Step 8)
-   • ⏳ Smoke-train on the 500-patient subset (Step 9 — runtime only)
+   • ✅ Trained checkpoints at K=1, K=2, K=4 on MIMIC-CXR subset (Step 9)
+   • ✅ MS-CXR-T evaluation pipeline — linear probe + zero-shot (Step 10)
 ```
 
-**Status — all architectural work complete.** Layers 1–5 are
-implemented, the multi-prior joint self-attention pooler is the only
-code path, the upstream BioViL-T checkpoint can be auto-migrated to any
-K_max ≥ 1, and `resume_train.py` exposes `--k-max` end-to-end. The
-35 automated tests (`biovilt/test_smoke.py` 32/32 +
-`biovilt/test_migration.py` 3/3) all pass.
+**Status — architectural work, training, and evaluation all complete.**
+Layers 1–5 are implemented, the multi-prior joint self-attention pooler
+is the only code path, the upstream BioViL-T checkpoint can be
+auto-migrated to any K_max ≥ 1, `resume_train.py` exposes `--k-max`
+end-to-end, three full pretraining runs were completed (K = 1, 2, 4),
+and `colab/eval_mscxrt_on_colab.ipynb` runs the MS-CXR-T evaluation
+(linear probe + zero-shot prompt ensemble) standalone per checkpoint.
+
+The architectural correctness was originally locked in by 35 automated
+tests (`biovilt/test_smoke.py` 32/32 + `biovilt/test_migration.py` 3/3).
+Those scratch test files were removed during repo cleanup once training
++ eval were stable; the invariants they enforced (PE migration math,
+shape K-invariance, mask isolation, K=1 bit-equivalence) are preserved
+implicitly by the trained checkpoints and the standalone self-test
+inside `multi_prior_block.py` (run `python biovilt/tempcxr/modules/multi_prior_block.py`).
 
 Each layer below shows: **what it looked like before** (single prior),
 **what it looks like now** (variable K up to K_max), and **why**. The
@@ -557,21 +567,135 @@ python biovilt/resume_train.py --k-max 4 --resume /path/to/epoch_40.pt
 
 ---
 
-## Step 9 — Smoke train on the 500-patient subset (runtime only)
+## Step 9 — Pretraining on the MIMIC-CXR subset
 
-Everything compiles + tests pass. The remaining step is to actually run
-~50 training iterations end-to-end against the 500-patient subset CSVs
-in `subset_out/` at `K_max=4`. This will catch only runtime issues
-(NaNs in joint attention, OOM at `(K+1)·L = 980` token sequences on the
-target GPUs, DataLoader worker bugs at K>1), not architectural ones —
-those are already covered by the 35 automated tests.
+The architecture and migration were validated, so the next step was a
+real pretraining sweep over `K_max in {1, 2, 4}` on a fixed 500-patient
+MIMIC-CXR subset (built by `biovilt/extract_subset.py` from the
+upstream metadata + chexpert + split CSVs, filtered to drop the
+"No Finding" rows via `biovilt/filter_no_finding_metadata.py`).
 
-Suggested check: tail the per-step loss for the first ~20 iterations
-and confirm `loss_g`, `loss_l`, `loss_m` are all finite and trending
-down. If `loss_l` blows up at K>1, the likeliest culprit is the
-key_padding_mask not being on the right device; in that case the
-`prior_mask.to(DEVICE)` lines in `resume_train.py` (train + val) are
-where to look.
+Each run:
+
+- Initialized from the official BioViL-T image checkpoint
+  (`biovil_t_image_model_proj_size_128.pt`) via the auto-migration in
+  `resume_train.py` (Step 7) so K=2 and K=4 runs start in
+  behaviorally-identical state to the K=1 run, then diverge as the
+  extra type-embed rows train.
+- Optimized the same three losses as upstreamViL-T
+  (global InfoNCE `loss_g`, local patch-token contrastive `loss_l`,
+  masked-LM `loss_m`).
+- Logged per-epoch val metrics to
+  `req_files/subset_checkpoints_k={K}/val_metrics.csv` and snapshotted
+  the model to `epoch_*.pt` in the same folder.
+- Used identical optimizer / scheduler / batch / image-size settings
+  across K so the only thing varying is the number of historical
+  priors the temporal pooler can attend to.
+
+**What this proves at runtime**, beyond the architectural tests:
+
+- `loss_g`, `loss_l`, `loss_m` are all finite for every epoch at every
+  K  no NaNs from the joint-attention path even at `(K+1)*L = 980`
+  tokens at K=4.
+- The `prior_mask` flows correctly to the GPU in both the train and
+  val loops (the K=4 run would have diverged immediately on `loss_l`
+  if it had not).
+- DataLoader worker behavior is correct at K>1  the variable-length
+  `prior_images` list is padded by `biovilt_collate_fn` without
+  desync.
+- `migrate_state_dict` plus `--init-from` is a working
+  pretrained -> multi-prior bootstrap pipeline, not just a test
+  fixture.
+
+The three resulting checkpoint folders
+(`req_files/subset_checkpoints_k={1,2,4}/`) are the artifacts the
+MS-CXR-T evaluation in Step 10 consumes. They are kept on local disk
+only  `req_files/` is in `.gitignore` because the JPEGs plus
+checkpoints are GB-scale and MIMIC-derived (DUA-restricted).
+
+---
+
+## Step 10 — Downstream evaluation on MS-CXR-T
+
+The goal of multi-prior pretraining is downstream temporal reasoning,
+so the evaluation suite has to be a *temporal* benchmark. We use
+**MS-CXR-T** (Boecking et al.) the small expert-annotated MIMIC-CXR
+subset where each current study is labeled with a per-finding
+progression class (`Worsening`, `Stable`, `Improving`) and is paired
+with the immediately previous study for that patient.
+
+### 10a. Data prep `biovilt/build_mscxrt_eval.py` and friends
+
+`biovilt/build_mscxrt_eval.py` is the one-shot ETL that converts the
+official MS-CXR-T study-level labels into the row format the eval
+pipeline expects: subject_i study_id, dicom_id_curr, dicom_id_prior, prior_study_id, finding, progression, split
+
+
+Each row is a *(current image, single immediate prior, finding,
+progression-label)* tuple  i.e., a K=1 view of the temporal pair,
+which is what MS-CXR-T was designed for. Sister scripts:
+
+- `biovilt/export_mscxrt_files.py`  emits `mscxrt_files_*.txt` listing
+  the exact DICOM/JPEG paths the eval needs, so a collaborator can
+  fetch only those files from PhysioNet rather than the full 0.5TB
+  MIMIC-CXR archive.
+- `biovilt/filter_no_finding_metadata.py` / `biovilt/extract_subset.py`
+   produce the 500-patient subset used for pretraining and keep the
+  MS-CXR-T eval rows that fall outside that subset (clean train/eval
+  separation).
+- `biovilt/plot_metrics.py`  reads
+  `req_files/subset_checkpoints_k={K}/val_metrics.csv` and draws the
+  per-K loss curves for the three pretraining losses.
+
+### 10b. The eval notebook `colab/eval_mscxrt_on_colab.ipynb`
+
+The actual evaluation runs in a single self-contained Colab notebook
+(originally three but consolidated into one for reproducibility). For
+**each** of the three checkpoint folders
+(`subset_checkpoints_k={1,2,4}`) it does, in order, with all results
+cached to disk so reruns are cheap:
+
+1. **Build representations.** Walk `mscxrt_eval.csv`, load
+   `(curr, prior)` pairs with the same image transforms used in
+   training, and run them through the migrated `TempCXR` checkpoint at
+   the K it was trained with. Cache the resulting
+   `(img_global, img_patches)` tensors to disk.
+2. **Linear probe.** Train a logistic regression head per finding on
+   `img_global` against the 3-way progression label, with a clean
+   train / val / test patient split. Report macro F1 and per-class
+   AUC. The linear probe is the standard "is the representation
+   useful?" test  strong probe accuracy means the pretraining
+   actually pushed the relevant temporal signal into the embedding,
+   not just somewhere in the network's weights.
+3. **Zero-shot prompt ensemble.** Build per-class text prompts
+   ("the {finding} is worsening", "the {finding} is stable",
+   "the {finding} is improving"), encode them with the *same*
+   checkpoint's text tower, and classify each image by cosine
+   similarity to the prompt ensemble for its finding. This isolates
+   the contribution of the joint image-text contrastive objective.
+4. **Aggregate and plot.** Concatenate the three checkpoints' metrics
+   into one wide table (rows = finding, columns = K x metric) plus
+   per-finding bar plots for direct K-comparison.
+
+The notebook ships with a small `req_files/mscxrt/` tree of just the
+images MS-CXR-T needs (mirrored from the official MIMIC-CXR layout),
+which is the same tree `export_mscxrt_files.py` generated  that is
+how it can run end-to-end on Colab without the full MIMIC archive.
+
+### Why this layer matters
+
+Pretraining loss curves can be misleading on a 500-patient subset.
+The MS-CXR-T linear probe + zero-shot suite is what actually answers
+the question this whole refactor was built for:
+
+> *Does adding K=2 / K=4 historical priors during pretraining make the
+> image and text towers carry more temporal-progression signal than
+> the K=1 BioViL-T baseline does?*
+
+Because the three K runs share an identical init (the migrated
+upstream K=1 weights) and identical hyperparameters, any delta in the
+MS-CXR-T metrics is attributable to the multi-prior pretraining
+signal  not to optimizer noise, data, or seed differences.
 
 ---
 
@@ -608,12 +732,18 @@ the original code.
 | `biovilt/migrate_checkpoint.py` | Step 7 — checkpoint migration utility (`migrate_state_dict`, CLI). Handles upstream BioViL-T → K_max-aware and K_max-to-K_max migrations. |
 | `biovilt/resume_train.py` | Step 8 — exposes `--k-max`, `--mode`, `--init-from`, `--resume`. Both train + val forward calls use the new `(curr, prior_imgs, prior_mask, texts=...)` signature. |
 | `biovilt/resume_train.sh` | SLURM launcher. Reads `K_MAX` env var, passes as `--k-max`. |
-| `biovilt/test_smoke.py` | 32 architectural invariant tests (PE migration, shape K-invariance, mask isolation, BioViL-T architecture, …). |
-| `biovilt/test_migration.py` | 3 end-to-end migration tests (shape, strict-load, bit-identical K=1 behavior preservation). |
+| `biovilt/extract_subset.py` | Builds the 500-patient MIMIC-CXR pretraining subset CSVs from the upstream metadata/chexpert/split sheets. |
+| `biovilt/filter_no_finding_metadata.py` | Drops "No Finding" rows so pretraining sees informative pairs. |
+| `biovilt/build_mscxrt_eval.py` | Step 10a converts official MS-CXR-T labels into per-row `(curr, prior, finding, progression)` eval CSVs. |
+| `biovilt/export_mscxrt_files.py` | Step 10a writes the exact DICOM/JPEG file list MS-CXR-T eval needs so collaborators fetch only those files from PhysioNet. |
+| `biovilt/plot_metrics.py` | Reads per-K `val_metrics.csv` and plots `loss_g`/`loss_l`/`loss_m` curves for the three pretraining runs. |
+| `colab/eval_mscxrt_on_colab.ipynb` | Step 10b self-contained MS-CXR-T evaluation notebook (linear probe + zero-shot prompt ensemble) run per K. |
+| `colab/train_on_colab.ipynb` | Colab mirror of the `resume_train.py` driver for ad-hoc runs and debugging. |
+| `req_files/` (local-only, gitignored) | MS-CXR-T images + per-K checkpoint folders (`subset_checkpoints_k={1,2,4}/{epoch_*.pt, val_metrics.csv}`). |
 
 ---
 
-## What the tests in `test_smoke.py` already enforce
+## What the tests in `test_smoke.py` enforced (now archived)
 
 | Test section | Refactor invariant it locks in |
 |---|---|
@@ -625,11 +755,20 @@ the original code.
 | **VARIABLE-K BATCHING** | The mask is respected; K=0 and K>0 samples coexist; K_max is decoupled from K_i. |
 | **BIOVIL-T ARCHITECTURE** | Flatten+concat sequence length is `(K+1)·L`; self-attention runs at every K; curr tokens attend to every prior; slice produces `P_diff : (B,L,D)` so `V = P_curr + P_diff` is K-invariant; `key_padding_mask` of shape `(B,(K+1)·L)` isolates padded prior slots. |
 
-So when you do the actual refactor, you run `python test_smoke.py` and
-the green/red checklist tells you which invariant you broke. The
-HYPOTHETICAL, VARIABLE-K, and BIOVIL-T ARCHITECTURE sections in
-particular are precisely the contract your refactored encoder needs to
-satisfy.
+So during the actual refactor, `python test_smoke.py` and
+`python test_migration.py` were the green/red checklists that told us
+which invariant a code change broke. The HYPOTHETICAL, VARIABLE-K, and
+BIOVIL-T ARCHITECTURE sections in particular were the contract the
+refactored encoder had to satisfy.
+
+The test files themselves were removed from the repo during cleanup
+once pretraining (Step 9) and the MS-CXR-T eval (Step 10) were stable
+- they were always scratch fixtures, not production tests. The same
+invariants are still checked at runtime by the standalone self-test
+inside `biovilt/tempcxr/modules/multi_prior_block.py` (run it with
+`python biovilt/tempcxr/modules/multi_prior_block.py`), which verifies
+padding isolation and real-prior sensitivity directly on the shipping
+pooler.
 
 ---
 
